@@ -1,0 +1,448 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+enum RoleType {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  REVOKED
+  SUSPENDED
+}
+
+enum WorkspaceStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIAL
+  EXPIRED
+  CANCELLED
+}
+
+enum DeviceStatus {
+  CONNECTED
+  DISCONNECTED
+  PAIRING
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum LogStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  QUEUED
+}
+
+// ----------------------------------------------------
+// AUTH & RBAC MODELS
+// ----------------------------------------------------
+model User {
+  id                 String      @id @default(uuid())
+  name               String
+  email              String      @unique
+  password           String      
+  role               RoleType    @default(USER)
+  status             UserStatus  @default(ACTIVE)
+  avatar             String?     
+  phone              String?
+  currentWorkspaceId String?
+  lastLoginAt        DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  deletedAt          DateTime?
+
+  // Referral & Affiliate System
+  referralCode       String?           @unique
+  referredById       String?
+  referredBy         User?             @relation("UserReferral", fields: [referredById], references: [id])
+  referrals          User[]            @relation("UserReferral")
+  walletBalance      Int               @default(0)
+
+  // Relations
+  ownedWorkspaces    Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers   WorkspaceUser[]
+  userRoles          UserRole[]
+  auditActions       AuditLog[]        @relation("ActorRelation")
+  auditTargets       AuditLog[]        @relation("TargetRelation")
+  campaigns          BlastCampaign[]
+  referralRewardsGiven ReferralReward[] @relation("ReferrerRelation")
+  referralRewardsReceived ReferralReward[] @relation("ReferredUserRelation")
+  payoutRequests     PayoutRequest[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String
+  code        String           @unique
+  description String?          
+  isSystem    Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  permissions RolePermission[]
+  userRoles   UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  name        String
+  module      String
+  description String?          
+  createdAt   DateTime         @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime   @default(now())
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId      String
+  roleId      String
+  createdAt   DateTime   @default(now())
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// ----------------------------------------------------
+// MULTI-TENANT WORKSPACE MODELS
+// ----------------------------------------------------
+model Workspace {
+  id          String          @id @default(uuid())
+  name        String
+  slug        String          @unique
+  ownerId     String
+  status      WorkspaceStatus @default(ACTIVE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+
+  owner       User            @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     WorkspaceUser[]
+  subscription Subscription?
+  devices     Device[]
+  campaigns   BlastCampaign[]
+  contacts    Contact[]
+  contactLists ContactList[]
+  autoReplyRules AutoReplyRule[]
+  auditLogs   AuditLog[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceUser {
+  id          String          @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        RoleType        @default(USER)
+  status      UserStatus      @default(ACTIVE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_users")
+}
+
+// ----------------------------------------------------
+// SUBSCRIPTION & PLANS
+// ----------------------------------------------------
+model SubscriptionPlan {
+  id             String         @id @default(uuid())
+  name           String
+  code           String         @unique
+  description    String?        
+  price          Float          @default(0)
+  maxUsers       Int            @default(1)
+  maxContacts    Int            @default(500)
+  maxWhatsApp    Int            @default(1)
+  maxBroadcasts  Int            @default(5)
+  maxMessages    Int            @default(1000)
+  maxCampaigns   Int            @default(5)
+  maxAutomations Int            @default(2)
+  maxTemplates   Int            @default(10)
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  subscriptions  Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id          String             @id @default(uuid())
+  workspaceId String             @unique
+  planId      String
+  status      SubscriptionStatus @default(ACTIVE)
+  startsAt    DateTime           @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan        SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@map("subscriptions")
+}
+
+// ----------------------------------------------------
+// CONTACTS & AUDIENCE SEGMENTATION
+// ----------------------------------------------------
+model Contact {
+  id           String                @id @default(uuid())
+  workspaceId  String
+  name         String
+  phone        String
+  email        String?
+  tags         Json?
+  customFields Json?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  listMembers  ContactListRelation[]
+
+  @@unique([workspaceId, phone])
+  @@map("contacts")
+}
+
+model ContactList {
+  id          String                @id @default(uuid())
+  workspaceId String
+  name        String
+  description String?               
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  workspace   Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts    ContactListRelation[]
+
+  @@map("contact_lists")
+}
+
+model ContactListRelation {
+  contactId String
+  listId    String
+  createdAt DateTime    @default(now())
+
+  contact   Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  list      ContactList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, listId])
+  @@map("contact_list_relations")
+}
+
+// ----------------------------------------------------
+// AUTO-REPLY CHATBOT ENGINE
+// ----------------------------------------------------
+model AutoReplyRule {
+  id              String      @id @default(uuid())
+  workspaceId     String
+  deviceId        String?
+  keyword         String      // e.g. "harga", "promo", "info"
+  matchType       String      @default("CONTAINS") // EXACT, CONTAINS, STARTS_WITH, DEFAULT
+  responseMessage String      
+  mediaUrl        String?     
+  mediaType       String?     // image, document
+  fileName        String?
+  isActive        Boolean     @default(true)
+  triggerCount    Int         @default(0)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  device          Device?     @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@map("auto_reply_rules")
+}
+
+// ----------------------------------------------------
+// AUDIT LOG
+// ----------------------------------------------------
+model AuditLog {
+  id           String     @id @default(uuid())
+  actorId      String?
+  targetUserId String?
+  workspaceId  String?
+  action       String
+  module       String     @default("auth")
+  details      String     
+  ipAddress    String?
+  userAgent    String?    
+  createdAt    DateTime   @default(now())
+
+  actor        User?      @relation("ActorRelation", fields: [actorId], references: [id], onDelete: SetNull)
+  targetUser   User?      @relation("TargetRelation", fields: [targetUserId], references: [id], onDelete: SetNull)
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+// ----------------------------------------------------
+// WHATSAPP & CAMPAIGN CORE MODELS
+// ----------------------------------------------------
+model Device {
+  id             String          @id @default(uuid())
+  workspaceId    String?
+  name           String
+  phoneNumber    String
+  status         DeviceStatus    @default(CONNECTED)
+  battery        Int             @default(100)
+  platform       String          @default("WhatsApp Multi-Device Cloud")
+  lastActive     DateTime        @default(now())
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  workspace      Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  campaigns      BlastCampaign[]
+  autoReplyRules AutoReplyRule[]
+
+  @@map("devices")
+}
+
+model BlastCampaign {
+  id           String         @id @default(uuid())
+  workspaceId  String?
+  title        String
+  message      String         
+  totalTarget  Int            @default(0)
+  sentCount    Int            @default(0)
+  failedCount  Int            @default(0)
+  pendingCount Int            @default(0)
+  status       CampaignStatus @default(COMPLETED)
+
+  deviceIds    Json?
+  minDelay     Int            @default(5)
+  maxDelay     Int            @default(12)
+  mediaUrl     String?        
+  mediaType    String?        // image, document
+  fileName     String?
+  scheduledAt  DateTime?
+  
+  deviceId     String?
+  device       Device?        @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  
+  createdById  String?
+  createdBy    User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  
+  workspace    Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now()) @updatedAt
+  logs         BlastLog[]
+
+  @@map("blast_campaigns")
+}
+
+model BlastLog {
+  id          String         @id @default(uuid())
+  campaignId  String?
+  campaign    BlastCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  deviceId    String?
+  recipient   String
+  name        String?
+  message     String         
+  status      LogStatus      @default(SENT)
+  errorReason String?        
+  sentAt      DateTime       @default(now())
+
+  @@map("blast_logs")
+}
+
+enum RewardStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+enum PayoutStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
+model ReferralReward {
+  id               String       @id @default(uuid())
+  referrerId       String
+  referrer         User         @relation("ReferrerRelation", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUserId   String
+  referredUser     User         @relation("ReferredUserRelation", fields: [referredUserId], references: [id], onDelete: Cascade)
+  invoiceNumber    String?
+  planCode         String
+  planName         String
+  buyerDiscount    Int          @default(0)
+  commissionAmount Int          @default(0)
+  status           RewardStatus @default(PENDING)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("referral_rewards")
+}
+
+model PayoutRequest {
+  id            String       @id @default(uuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  bankName      String
+  accountNumber String
+  accountHolder String
+  status        PayoutStatus @default(PENDING)
+  notes         String?      
+  proofUrl      String?      
+  createdAt     DateTime     @default(now())
+  processedAt   DateTime?
+
+  @@map("payout_requests")
+}

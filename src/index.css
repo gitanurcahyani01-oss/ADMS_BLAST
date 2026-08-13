@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: "Plus Jakarta Sans", "Inter", -apple-system, sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", "Fira Code", monospace;
+
+  /* Navy Palettes */
+  --color-navy-950: #06152B;
+  --color-navy-900: #0A2540;
+  --color-navy-800: #0E2A47;
+  --color-navy-700: #13385E;
+  --color-navy-600: #1E4E7C;
+  --color-navy-500: #2563EB;
+  --color-navy-100: #E2E8F0;
+  --color-navy-50: #F0F4F8;
+
+  /* Gold Palettes */
+  --color-gold-600: #B8860B;
+  --color-gold-500: #D4AF37;
+  --color-gold-400: #E5B83B;
+  --color-gold-300: #F59E0B;
+  --color-gold-200: #FFC727;
+  --color-gold-100: #FEF3C7;
+  --color-gold-50: #FFFDF5;
+
+  /* Emerald (WhatsApp & Success) */
+  --color-emerald-500: #00C853;
+  --color-emerald-600: #059669;
+}
+
+html {
+  scroll-behavior: auto !important;
+  /* Managed smoothly by Lenis */
+}
+
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
+}
+
+html.dark body {
+  background-color: #07101E;
+  color: #F1F5F9;
+}
+
+body {
+  background-color: #ffffff;
+  color: #1e293b;
+  font-family: var(--font-body);
+  overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+::selection {
+  background: #fef08a;
+  color: #0e2a47;
+}
+
+.dark ::selection {
+  background: #d4af37;
+  color: #07101e;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* ========================================================================= */
+/* LIGHTWEIGHT SCROLL REVEAL MICRO-ANIMATIONS (HARDWARE ACCELERATED) */
+/* ========================================================================= */
+.reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1), transform 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-delay-1 {
+  transition-delay: 0.1s;
+}
+
+.reveal-delay-2 {
+  transition-delay: 0.2s;
+}
+
+.reveal-delay-3 {
+  transition-delay: 0.3s;
+}
+
+/* Gold Gradient utilities */
+.bg-gradient-gold {
+  background: linear-gradient(135deg, #FFC727 0%, #E5B83B 50%, #D4AF37 100%);
+}
+
+.bg-gradient-navy {
+  background: linear-gradient(135deg, #0A2540 0%, #0E2A47 60%, #13385E 100%);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(135deg, #D4AF37 0%, #F59E0B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Float animations */
+@keyframes float-slow {
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes float-reverse {
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(7px);
+  }
+}
+
+.animate-float-slow {
+  animation: float-slow 4s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: float-reverse 4.5s ease-in-out infinite;
+}
+
+/* Custom scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.4);
+  border-radius: 4px;
+}
