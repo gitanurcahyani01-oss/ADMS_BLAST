@@ -98,7 +98,119 @@ function buildWhere(whereObj) {
   };
 }
 
-function createModelDelegate(modelName) {
+// Mapping relations for Prisma-like `include` queries
+const RELATION_MAP = {
+  user: {
+    workspaceMembers: { model: 'workspaceUser', foreignKey: 'userId', relationType: 'many' },
+    ownedWorkspaces: { model: 'workspace', foreignKey: 'ownerId', relationType: 'many' },
+    userRoles: { model: 'userRole', foreignKey: 'userId', relationType: 'many' }
+  },
+  workspaceUser: {
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' },
+    user: { model: 'user', foreignKey: 'id', localKey: 'userId', relationType: 'one' }
+  },
+  workspace: {
+    subscription: { model: 'subscription', foreignKey: 'workspaceId', relationType: 'one' },
+    owner: { model: 'user', foreignKey: 'id', localKey: 'ownerId', relationType: 'one' },
+    devices: { model: 'device', foreignKey: 'workspaceId', relationType: 'many' },
+    campaigns: { model: 'blastCampaign', foreignKey: 'workspaceId', relationType: 'many' },
+    contacts: { model: 'contact', foreignKey: 'workspaceId', relationType: 'many' },
+    contactLists: { model: 'contactList', foreignKey: 'workspaceId', relationType: 'many' },
+    autoReplyRules: { model: 'autoReplyRule', foreignKey: 'workspaceId', relationType: 'many' }
+  },
+  subscription: {
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' },
+    plan: { model: 'subscriptionPlan', foreignKey: 'id', localKey: 'planId', relationType: 'one' }
+  },
+  userRole: {
+    role: { model: 'role', foreignKey: 'id', localKey: 'roleId', relationType: 'one' },
+    user: { model: 'user', foreignKey: 'id', localKey: 'userId', relationType: 'one' }
+  },
+  role: {
+    permissions: { model: 'rolePermission', foreignKey: 'roleId', relationType: 'many' }
+  },
+  rolePermission: {
+    permission: { model: 'permission', foreignKey: 'id', localKey: 'permissionId', relationType: 'one' }
+  },
+  blastCampaign: {
+    device: { model: 'device', foreignKey: 'id', localKey: 'deviceId', relationType: 'one' },
+    createdBy: { model: 'user', foreignKey: 'id', localKey: 'createdById', relationType: 'one' },
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' }
+  },
+  blastLog: {
+    campaign: { model: 'blastCampaign', foreignKey: 'id', localKey: 'campaignId', relationType: 'one' }
+  },
+  device: {
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' }
+  },
+  contact: {
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' },
+    listMembers: { model: 'contactListRelation', foreignKey: 'contactId', relationType: 'many' }
+  },
+  contactListRelation: {
+    contact: { model: 'contact', foreignKey: 'id', localKey: 'contactId', relationType: 'one' },
+    list: { model: 'contactList', foreignKey: 'id', localKey: 'listId', relationType: 'one' }
+  },
+  contactList: {
+    contacts: { model: 'contactListRelation', foreignKey: 'listId', relationType: 'many' }
+  },
+  referralReward: {
+    referrer: { model: 'user', foreignKey: 'id', localKey: 'referrerId', relationType: 'one' },
+    referredUser: { model: 'user', foreignKey: 'id', localKey: 'referredUserId', relationType: 'one' }
+  },
+  payoutRequest: {
+    user: { model: 'user', foreignKey: 'id', localKey: 'userId', relationType: 'one' }
+  }
+};
+
+async function resolveIncludes(modelName, rows, include, conn = null) {
+  if (!include || !rows || rows.length === 0) return;
+
+  const modelRelations = RELATION_MAP[modelName];
+  if (!modelRelations) return;
+
+  for (const [relationName, relationIncludeVal] of Object.entries(include)) {
+    if (!relationIncludeVal) continue;
+
+    const relConfig = modelRelations[relationName];
+    if (!relConfig) continue;
+
+    const { model, foreignKey, localKey = 'id', relationType } = relConfig;
+
+    for (const row of rows) {
+      const keyValue = row[localKey];
+      if (keyValue === undefined || keyValue === null) {
+        row[relationName] = relationType === 'many' ? [] : null;
+        continue;
+      }
+
+      const delegate = createModelDelegate(model, conn);
+
+      const queryArgs = {
+        where: { [foreignKey]: keyValue }
+      };
+      if (typeof relationIncludeVal === 'object' && relationIncludeVal.select) {
+        queryArgs.select = relationIncludeVal.select;
+      }
+
+      if (relationType === 'many') {
+        const relatedRows = await delegate.findMany(queryArgs);
+        if (typeof relationIncludeVal === 'object' && relationIncludeVal.include) {
+          await resolveIncludes(model, relatedRows, relationIncludeVal.include, conn);
+        }
+        row[relationName] = relatedRows;
+      } else {
+        const relatedRow = await delegate.findFirst(queryArgs);
+        if (relatedRow && typeof relationIncludeVal === 'object' && relationIncludeVal.include) {
+          await resolveIncludes(model, [relatedRow], relationIncludeVal.include, conn);
+        }
+        row[relationName] = relatedRow;
+      }
+    }
+  }
+}
+
+function createModelDelegate(modelName, conn = null) {
   const tableName = getTableName(modelName);
 
   return {
@@ -112,7 +224,7 @@ function createModelDelegate(modelName) {
     },
 
     async findMany(args = {}) {
-      const { where, orderBy, take, skip, select } = args;
+      const { where, orderBy, take, skip, select, include } = args;
       const { clause, params } = buildWhere(where);
 
       let selectClause = '*';
@@ -141,10 +253,10 @@ function createModelDelegate(modelName) {
       }
 
       const sql = `SELECT ${selectClause} FROM \`${tableName}\` ${clause} ${orderClause} ${limitClause}`.trim();
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       const [rows] = await p.execute(sql, params);
 
-      return rows.map(row => {
+      const formattedRows = rows.map(row => {
         const formatted = { ...row };
         for (const [k, v] of Object.entries(formatted)) {
           if (typeof v === 'string' && (v.startsWith('{') || v.startsWith('['))) {
@@ -155,6 +267,12 @@ function createModelDelegate(modelName) {
         }
         return formatted;
       });
+
+      if (include) {
+        await resolveIncludes(modelName, formattedRows, include, conn);
+      }
+
+      return formattedRows;
     },
 
     async create(args = {}) {
@@ -177,7 +295,7 @@ function createModelDelegate(modelName) {
       }
 
       const sql = `INSERT INTO \`${tableName}\` (${keys.join(', ')}) VALUES (${placeholders.join(', ')})`;
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       await p.execute(sql, params);
 
       if (data.id) {
@@ -195,6 +313,13 @@ function createModelDelegate(modelName) {
 
       for (const [k, v] of Object.entries(data)) {
         if (v === undefined) continue;
+
+        if (v !== null && typeof v === 'object' && 'increment' in v) {
+          setClauses.push(`\`${k}\` = \`${k}\` + ?`);
+          params.push(v.increment);
+          continue;
+        }
+
         setClauses.push(`\`${k}\` = ?`);
         if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
           params.push(JSON.stringify(v));
@@ -207,7 +332,7 @@ function createModelDelegate(modelName) {
       params.push(...whereParams);
 
       const sql = `UPDATE \`${tableName}\` SET ${setClauses.join(', ')} ${clause}`;
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       await p.execute(sql, params);
 
       return this.findFirst({ where });
@@ -232,6 +357,13 @@ function createModelDelegate(modelName) {
 
       for (const [k, v] of Object.entries(data)) {
         if (v === undefined) continue;
+
+        if (v !== null && typeof v === 'object' && 'increment' in v) {
+          setClauses.push(`\`${k}\` = \`${k}\` + ?`);
+          params.push(v.increment);
+          continue;
+        }
+
         setClauses.push(`\`${k}\` = ?`);
         if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
           params.push(JSON.stringify(v));
@@ -244,7 +376,7 @@ function createModelDelegate(modelName) {
       params.push(...whereParams);
 
       const sql = `UPDATE \`${tableName}\` SET ${setClauses.join(', ')} ${clause}`;
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       const [res] = await p.execute(sql, params);
       return { count: res.affectedRows };
     },
@@ -260,7 +392,7 @@ function createModelDelegate(modelName) {
       const { where } = args;
       const { clause, params } = buildWhere(where);
       const sql = `DELETE FROM \`${tableName}\` ${clause}`;
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       const [res] = await p.execute(sql, params);
       return { count: res.affectedRows };
     },
@@ -269,43 +401,70 @@ function createModelDelegate(modelName) {
       const { where } = args;
       const { clause, params } = buildWhere(where);
       const sql = `SELECT COUNT(*) as total FROM \`${tableName}\` ${clause}`;
-      const p = pool.getPool();
+      const p = conn || pool.getPool();
       const [rows] = await p.execute(sql, params);
       return parseInt(rows[0]?.total || 0, 10);
     }
   };
 }
 
-const prisma = new Proxy({}, {
-  get(target, prop) {
-    if (prop === '$transaction') {
-      return async function (arg) {
-        if (Array.isArray(arg)) {
-          const results = [];
-          for (const item of arg) {
-            if (typeof item === 'function') {
-              results.push(await item());
-            } else {
-              results.push(await item);
+function createPrismaClient(conn = null) {
+  return new Proxy({}, {
+    get(target, prop) {
+      if (prop === '$transaction') {
+        return async function (arg) {
+          if (conn) {
+            if (typeof arg === 'function') {
+              return await arg(this);
+            }
+            if (Array.isArray(arg)) {
+              const results = [];
+              for (const item of arg) {
+                results.push(await item);
+              }
+              return results;
             }
           }
-          return results;
-        } else if (typeof arg === 'function') {
-          return await arg(prisma);
-        }
-      };
+
+          const pPool = pool.getPool();
+          const connection = await pPool.getConnection();
+          try {
+            await connection.beginTransaction();
+            const txClient = createPrismaClient(connection);
+            let result;
+            if (Array.isArray(arg)) {
+              const results = [];
+              for (const item of arg) {
+                results.push(await item);
+              }
+              result = results;
+            } else if (typeof arg === 'function') {
+              result = await arg(txClient);
+            }
+            await connection.commit();
+            return result;
+          } catch (e) {
+            await connection.rollback();
+            throw e;
+          } finally {
+            connection.release();
+          }
+        };
+      }
+      if (prop === '$queryRaw') {
+        return async function (sql, ...params) {
+          const p = conn || pool.getPool();
+          const [rows] = await p.execute(sql, params);
+          return rows;
+        };
+      }
+      if (typeof prop === 'string') {
+        return createModelDelegate(prop, conn);
+      }
     }
-    if (prop === '$queryRaw') {
-      return async function (sql, ...params) {
-        const p = pool.getPool();
-        const [rows] = await p.execute(sql, params);
-        return rows;
-      };
-    }
-    if (typeof prop === 'string') {
-      return createModelDelegate(prop);
-    }
-  }
-});
+  });
+}
+
+const prisma = createPrismaClient();
 
 export default prisma;

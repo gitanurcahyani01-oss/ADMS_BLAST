@@ -12,13 +12,6 @@ dotenv.config();
 
 let pool = null;
 
-// Default production fallbacks for cPanel hosting if process.env is missing or unreadable
-const FALLBACK_HOST = '127.0.0.1';
-const FALLBACK_USER = 'jasapeny_admsuser';
-const FALLBACK_PASS = 'SuksesBlast2026';
-const FALLBACK_DB   = 'jasapeny_admsblastdb';
-const FALLBACK_PORT = 3306;
-
 export function getPool() {
   if (pool) return pool;
 
@@ -45,26 +38,38 @@ export function getPool() {
     }
   }
 
-  // Parameter-based connection fallback (forces 127.0.0.1 IPv4)
-  const host = process.env.DB_HOST || FALLBACK_HOST;
-  const user = process.env.DB_USER || FALLBACK_USER;
-  const password = process.env.DB_PASSWORD || FALLBACK_PASS;
-  const database = process.env.DB_NAME || FALLBACK_DB;
-  const port = parseInt(process.env.DB_PORT || String(FALLBACK_PORT), 10);
+  // Parameter-based connection
+  const host = process.env.DB_HOST;
+  const user = process.env.DB_USER;
+  const password = process.env.DB_PASSWORD;
+  const database = process.env.DB_NAME;
+  const port = parseInt(process.env.DB_PORT || '3306', 10);
+  const socketPath = process.env.DB_SOCKET;
 
-  console.log(`🔌 Connecting to MySQL (${user}@${host}:${port}/${database})...`);
+  if (!socketPath && (!host || !user || !database)) {
+    throw new Error('❌ MySQL configuration is missing in environment variables. Set DATABASE_URL or DB_HOST, DB_USER, DB_NAME, DB_PASSWORD in .env.');
+  }
 
-  pool = mysql.createPool({
-    host,
+  const poolConfig = {
     user,
     password,
     database,
-    port,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
     enableKeepAlive: true
-  });
+  };
+
+  if (socketPath) {
+    poolConfig.socketPath = socketPath;
+    console.log(`🔌 Connecting to MySQL via Unix Socket (${user}@${socketPath}/${database})...`);
+  } else {
+    poolConfig.host = host;
+    poolConfig.port = port;
+    console.log(`🔌 Connecting to MySQL via TCP (${user}@${host}:${port}/${database})...`);
+  }
+
+  pool = mysql.createPool(poolConfig);
 
   return pool;
 }
