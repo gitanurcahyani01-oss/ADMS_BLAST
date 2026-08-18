@@ -136,7 +136,8 @@ export default function Broadcast() {
           const { data, ok } = await authFetch(`/broadcasts/${activeCampaignId}/progress`);
           if (ok && data.success) {
             setActiveProgress(data.data);
-            if (data.data.status === 'COMPLETED' || data.data.status === 'CANCELLED') {
+            if (data.data.status === 'COMPLETED' || data.data.status === 'CANCELLED' || data.data.status === 'FAILED') {
+              setActiveCampaignId(null);
               fetchData();
             }
           }

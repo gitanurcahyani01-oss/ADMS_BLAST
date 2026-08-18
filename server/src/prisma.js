@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import pool from './db.js';
 
 // Mapping camelCase model names to MySQL table names
@@ -23,6 +24,19 @@ const TABLE_MAP = {
   payoutRequest: 'payout_requests'
 };
 
+const MODELS_WITH_CREATED_AT = new Set([
+  'user', 'role', 'permission', 'rolePermission', 'userRole',
+  'workspace', 'workspaceUser', 'subscriptionPlan', 'subscription',
+  'contact', 'contactList', 'contactListRelation', 'autoReplyRule',
+  'auditLog', 'device', 'blastCampaign', 'referralReward', 'payoutRequest'
+]);
+
+const MODELS_WITH_UPDATED_AT = new Set([
+  'user', 'role', 'workspace', 'workspaceUser', 'subscriptionPlan',
+  'subscription', 'contact', 'contactList', 'autoReplyRule',
+  'device', 'blastCampaign', 'referralReward'
+]);
+
 function getTableName(model) {
   return TABLE_MAP[model] || model.toLowerCase() + 's';
 }
@@ -36,6 +50,24 @@ function buildWhere(whereObj) {
 
   for (const [key, val] of Object.entries(whereObj)) {
     if (val === undefined) continue;
+
+    // Handle OR / AND logical operators
+    if ((key === 'OR' || key === 'AND') && Array.isArray(val)) {
+      if (val.length === 0) continue;
+      const subClauses = [];
+      for (const item of val) {
+        const { clause: subClause, params: subParams } = buildWhere(item);
+        if (subClause) {
+          const subClauseClean = subClause.startsWith('WHERE ') ? subClause.slice(6) : subClause;
+          subClauses.push(`(${subClauseClean})`);
+          params.push(...subParams);
+        }
+      }
+      if (subClauses.length > 0) {
+        conditions.push(`(${subClauses.join(` ${key} `)})`);
+      }
+      continue;
+    }
 
     // Handle composite unique key objects e.g. { roleId_permissionId: { roleId, permissionId } }
     if (typeof val === 'object' && val !== null && !Array.isArray(val) && !(val instanceof Date) && !('in' in val || 'contains' in val || 'startsWith' in val || 'gte' in val || 'lte' in val || 'gt' in val || 'lt' in val || 'not' in val)) {
@@ -135,7 +167,8 @@ const RELATION_MAP = {
   blastCampaign: {
     device: { model: 'device', foreignKey: 'id', localKey: 'deviceId', relationType: 'one' },
     createdBy: { model: 'user', foreignKey: 'id', localKey: 'createdById', relationType: 'one' },
-    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' }
+    workspace: { model: 'workspace', foreignKey: 'id', localKey: 'workspaceId', relationType: 'one' },
+    logs: { model: 'blastLog', foreignKey: 'campaignId', relationType: 'many' }
   },
   blastLog: {
     campaign: { model: 'blastCampaign', foreignKey: 'id', localKey: 'campaignId', relationType: 'one' }
@@ -279,6 +312,18 @@ function createModelDelegate(modelName, conn = null) {
       const { data } = args;
       if (!data) throw new Error('Data argument required for create');
 
+      const compositeModels = ['rolePermission', 'userRole', 'contactListRelation'];
+      if (!data.id && !compositeModels.includes(modelName)) {
+        data.id = crypto.randomUUID();
+      }
+
+      if (MODELS_WITH_CREATED_AT.has(modelName) && data.createdAt === undefined) {
+        data.createdAt = new Date();
+      }
+      if (MODELS_WITH_UPDATED_AT.has(modelName) && data.updatedAt === undefined) {
+        data.updatedAt = new Date();
+      }
+
       const keys = [];
       const placeholders = [];
       const params = [];
@@ -304,9 +349,66 @@ function createModelDelegate(modelName, conn = null) {
       return data;
     },
 
+    async createMany(args = {}) {
+      const { data } = args;
+      if (!data) throw new Error('Data argument required for createMany');
+      const dataArray = Array.isArray(data) ? data : [data];
+      if (dataArray.length === 0) return { count: 0 };
+
+      const compositeModels = ['rolePermission', 'userRole', 'contactListRelation'];
+
+      const allKeysSet = new Set();
+      for (const row of dataArray) {
+        if (!row.id && !compositeModels.includes(modelName)) {
+          row.id = crypto.randomUUID();
+        }
+        if (MODELS_WITH_CREATED_AT.has(modelName) && row.createdAt === undefined) {
+          row.createdAt = new Date();
+        }
+        if (MODELS_WITH_UPDATED_AT.has(modelName) && row.updatedAt === undefined) {
+          row.updatedAt = new Date();
+        }
+        for (const k of Object.keys(row)) {
+          if (row[k] !== undefined) {
+            allKeysSet.add(k);
+          }
+        }
+      }
+      const keys = Array.from(allKeysSet);
+      const keysStr = keys.map(k => `\`${k}\``).join(', ');
+
+      const placeholders = [];
+      const params = [];
+
+      for (const row of dataArray) {
+        const rowPlaceholders = [];
+        for (const k of keys) {
+          const v = row[k];
+          rowPlaceholders.push('?');
+          if (v === undefined || v === null) {
+            params.push(null);
+          } else if (typeof v === 'object' && !(v instanceof Date)) {
+            params.push(JSON.stringify(v));
+          } else {
+            params.push(v);
+          }
+        }
+        placeholders.push(`(${rowPlaceholders.join(', ')})`);
+      }
+
+      const sql = `INSERT INTO \`${tableName}\` (${keysStr}) VALUES ${placeholders.join(', ')}`;
+      const p = conn || pool.getPool();
+      const [res] = await p.execute(sql, params);
+      return { count: res.affectedRows };
+    },
+
     async update(args = {}) {
       const { where, data } = args;
       if (!where || !data) throw new Error('where and data arguments required for update');
+
+      if (MODELS_WITH_UPDATED_AT.has(modelName) && data.updatedAt === undefined) {
+        data.updatedAt = new Date();
+      }
 
       const setClauses = [];
       const params = [];
@@ -351,6 +453,10 @@ function createModelDelegate(modelName, conn = null) {
     async updateMany(args = {}) {
       const { where, data } = args;
       if (!data) throw new Error('data argument required for updateMany');
+
+      if (MODELS_WITH_UPDATED_AT.has(modelName) && data.updatedAt === undefined) {
+        data.updatedAt = new Date();
+      }
 
       const setClauses = [];
       const params = [];

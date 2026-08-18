@@ -33,13 +33,17 @@ export default function SmoothScroll({ children }) {
     const handleAnchorClick = (e) => {
       const anchor = e.target.closest("a");
       if (anchor && anchor.hash && anchor.origin === window.location.origin) {
-        const targetEl = document.querySelector(anchor.hash);
-        if (targetEl) {
-          e.preventDefault();
-          lenis.scrollTo(targetEl, {
-            offset: -80,
-            duration: 1.2,
-          });
+        try {
+          const targetEl = document.querySelector(anchor.hash);
+          if (targetEl) {
+            e.preventDefault();
+            lenis.scrollTo(targetEl, {
+              offset: -80,
+              duration: 1.2,
+            });
+          }
+        } catch (err) {
+          // Ignore invalid selector errors for hash routes like #/dashboard/...
         }
       }
     };
@@ -85,12 +89,16 @@ export default function SmoothScroll({ children }) {
   useEffect(() => {
     if (lenisRef.current) {
       if (location.hash) {
-        const target = document.querySelector(location.hash);
-        if (target) {
-          setTimeout(() => {
-            lenisRef.current?.scrollTo(target, { offset: -80, immediate: false });
-          }, 50);
-          return;
+        try {
+          const target = document.querySelector(location.hash);
+          if (target) {
+            setTimeout(() => {
+              lenisRef.current?.scrollTo(target, { offset: -80, immediate: false });
+            }, 50);
+            return;
+          }
+        } catch (err) {
+          // Ignore invalid selector errors
         }
       }
       lenisRef.current.scrollTo(0, { immediate: true });
