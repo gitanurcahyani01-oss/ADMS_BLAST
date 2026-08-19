@@ -126,6 +126,24 @@ export const createBroadcast = async (req, res) => {
     const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
     const initialStatus = isScheduled ? 'SCHEDULED' : autoStart ? 'RUNNING' : 'DRAFT';
 
+    // Auto-Assign ALL connected devices if deviceIds is empty (Enables automatic Round-Robin)
+    let finalDeviceIds = Array.isArray(deviceIds) ? deviceIds : [];
+    
+    if (finalDeviceIds.length === 0) {
+      const activeDevices = await prisma.device.findMany({
+        where: { workspaceId, status: 'CONNECTED' },
+        select: { id: true }
+      });
+      finalDeviceIds = activeDevices.map(d => d.id);
+      
+      if (finalDeviceIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tidak ada perangkat WhatsApp yang aktif (CONNECTED). Silakan hubungkan minimal 1 perangkat terlebih dahulu.',
+        });
+      }
+    }
+
     // Create Campaign in PostgreSQL
     const campaign = await prisma.blastCampaign.create({
       data: {
@@ -137,7 +155,7 @@ export const createBroadcast = async (req, res) => {
         failedCount: 0,
         pendingCount: recipients.length,
         status: initialStatus,
-        deviceIds: Array.isArray(deviceIds) ? deviceIds : [],
+        deviceIds: finalDeviceIds,
         minDelay: parseInt(minDelay) || 5,
         maxDelay: parseInt(maxDelay) || 12,
         mediaUrl: mediaUrl || null,

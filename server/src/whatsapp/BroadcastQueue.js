@@ -111,7 +111,7 @@ class BroadcastQueue {
 
     // Resolve target devices (Multi-device rotation)
     const rawDeviceIds = campaign.deviceIds?.length > 0 ? campaign.deviceIds : campaign.deviceId ? [campaign.deviceId] : [];
-    
+
     // Filter & auto-wake target devices
     const connectedDeviceIds = [];
     for (const devId of rawDeviceIds) {
@@ -209,6 +209,7 @@ class BroadcastQueue {
             fileName: campaign.fileName,
           });
 
+
           sentTotal++;
           await prisma.blastLog.update({
             where: { id: log.id },
@@ -248,7 +249,7 @@ class BroadcastQueue {
         const minD = campaign.minDelay || 5;
         const maxD = campaign.maxDelay || 12;
         const delaySeconds = Math.floor(Math.random() * (maxD - minD + 1) + minD);
-        
+
         await this.sleep(delaySeconds * 1000);
       }
 
@@ -287,7 +288,7 @@ class BroadcastQueue {
       prisma.blastCampaign.update({
         where: { id: campaignId },
         data: { status: 'PAUSED' },
-      }).catch(() => {});
+      }).catch(() => { });
       return { success: true, message: 'Kampanye berhasil dijeda (Paused).' };
     }
     return { success: false, message: 'Kampanye tidak sedang berjalan aktif.' };
@@ -304,7 +305,7 @@ class BroadcastQueue {
       prisma.blastCampaign.update({
         where: { id: campaignId },
         data: { status: 'RUNNING' },
-      }).catch(() => {});
+      }).catch(() => { });
       return { success: true, message: 'Kampanye dilanjutkan (Resumed).' };
     }
     // If not in memory, start from DB
@@ -323,7 +324,7 @@ class BroadcastQueue {
     prisma.blastCampaign.update({
       where: { id: campaignId },
       data: { status: 'CANCELLED' },
-    }).catch(() => {});
+    }).catch(() => { });
 
     return { success: true, message: 'Kampanye berhasil dibatalkan.' };
   }

@@ -1,12 +1,25 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { login, register, getMe, switchWorkspace, logout } from '../controllers/authController.js';
 import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Strict Rate Limiter for Auth endpoints (Brute-force protection)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 requests per windowMs
+  message: {
+    success: false,
+    message: 'Terlalu banyak percobaan login/register dari IP ini. Silakan coba lagi setelah 15 menit.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Public routes
-router.post('/login', login);
-router.post('/register', register);
+router.post('/login', authLimiter, login);
+router.post('/register', authLimiter, register);
 
 // Protected routes
 router.get('/me', verifyToken, getMe);
